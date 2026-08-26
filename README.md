@@ -41,3 +41,7 @@ Do not put a Supabase service-role/secret key in Vercel environment variables ex
 ## Important
 
 The "username" is a login convenience. Supabase Auth still uses the internal email identity such as `nuno@teamrota.local`; the user only sees the username field in the app.
+
+## V3 database migration
+
+Run `v3_migration.sql` once in Supabase SQL Editor before deploying V3. It adds draft/publish support to rota shifts and restricts team members to published shifts.

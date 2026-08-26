@@ -48,6 +48,10 @@ function isAdmin() { return currentMember?.role === 'admin' }
 function shiftFor(memberId, date) {
   return shifts.find(s => s.team_member_id === memberId && s.shift_date === date)
 }
+function weekIsPublished() {
+  if (!shifts.length) return false
+  return shifts.every(s => s.published !== false)
+}
 function notify(msg, kind='info') {
   const el = document.createElement('div')
   el.className = `toast ${kind}`
@@ -165,33 +169,86 @@ async function renderCurrent() {
 
 async function renderRota(view) {
   await loadShifts()
-  const m=monday(weekDate)
-  const days=Array.from({length:7},(_,i)=>addDays(m,i))
+  const m=monday(weekDate), days=Array.from({length:7},(_,i)=>addDays(m,i))
+  const today=isoDate(new Date())
+  const published=weekIsPublished()
   view.innerHTML=`
     <section class="panel">
       <div class="toolbar">
-        <div class="nav"><button class="ghost" id="prev">‹</button><strong>${weekLabel()}</strong><button class="ghost" id="next">›</button></div>
-        <div class="actions"><button class="ghost" id="today">Today</button>${isAdmin()?'<button class="primary" id="add-member">+ Manage team</button>':''}</div>
+        <div class="nav"><button class="ghost" id="prev">‹</button><strong>${weekLabel()}</strong><button class="ghost" id="next">›</button>${isAdmin()?`<span class="status-pill ${published?'published':'draft'}">${published?'Published':'Draft'}</span>`:''}<button class="ghost" id="today">Today</button></div>
+        <div class="actions">${isAdmin()?'<button class="ghost" id="repeat-week">Repeat week</button><button class="primary" id="publish-week">'+(published?'Unpublish week':'Publish week')+'</button>':''}</div>
       </div>
       <div class="calendar"><div class="grid">
-        <div class="head"><div>Team member</div>${days.map(d=>`<div>${d.toLocaleDateString('en-GB',{weekday:'short'})}<small>${fmtDate(d)}</small></div>`).join('')}</div>
-        ${members.map(p=>`<div class="row"><div class="person"><span class="avatar">${initials(p.name)}</span>${esc(p.name)}</div>
+        <div class="head"><div>Team member</div>${days.map(d=>`<div class="${isoDate(d)===today?'today-head':''} ${d.getDay()===0||d.getDay()===6?'weekend':''}">${d.toLocaleDateString('en-GB',{weekday:'short'})}<small>${fmtDate(d)}</small></div>`).join('')}</div>
+        ${members.map(p=>`<div class="row"><div class="person"><span class="avatar">${initials(p.name)}</span><div>${esc(p.name)}${isAdmin()&&p.active===false?'<small class="inactive">Inactive</small>':''}</div></div>
           ${days.map(d=>{
-            const s=shiftFor(p.id,isoDate(d))
-            return `<div class="cell">${isAdmin()
-              ? `<button class="shift ${s?typeClass[s.shift_type]:'empty'}" data-edit="${p.id}|${isoDate(d)}">${s?esc(s.shift_type):'+'}</button>`
+            const date=isoDate(d), s=shiftFor(p.id,date)
+            return `<div class="cell ${date===today?'today-cell':''} ${d.getDay()===0||d.getDay()===6?'weekend-cell':''}" data-drop="${p.id}|${date}">${isAdmin()
+              ? `<button draggable="${!!s}" class="shift ${s?typeClass[s.shift_type]:'empty'} ${s?.published===false?'unpublished':''}" data-edit="${p.id}|${date}" data-drag="${s?.id||''}">${s?esc(s.shift_type):'+'}${s?.published===false?'<span class="draft-mark">Draft</span>':''}</button>`
               : `<div class="shift ${s?typeClass[s.shift_type]:'empty'}">${s?esc(s.shift_type):'—'}</div>`}
             </div>`
           }).join('')}
         </div>`).join('')}
       </div></div>
-      <div class="legend"><span><i class="dot office"></i>Office</span><span><i class="dot remote"></i>Remote</span><span><i class="dot oncall"></i>On call</span><span><i class="dot leave"></i>Leave</span><span><i class="dot training"></i>Training</span></div>
+      <div class="legend"><span><i class="dot office"></i>Office</span><span><i class="dot remote"></i>Remote</span><span><i class="dot oncall"></i>On call</span><span><i class="dot leave"></i>Leave</span><span><i class="dot training"></i>Training</span>${isAdmin()?'<span><i class="dot draft-dot"></i>Draft</span>':''}</div>
     </section>`
   document.querySelector('#prev').onclick=async()=>{weekDate=addDays(weekDate,-7);await renderCurrent()}
   document.querySelector('#next').onclick=async()=>{weekDate=addDays(weekDate,7);await renderCurrent()}
   document.querySelector('#today').onclick=async()=>{weekDate=new Date();await renderCurrent()}
   document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openShiftModal(b.dataset.edit))
-  document.querySelector('#add-member')?.addEventListener('click',async()=>{activeTab='admin';await renderCurrent();document.querySelector('#manage-team')?.click()})
+  if(isAdmin()) {
+    document.querySelector('#publish-week').onclick=()=>togglePublishWeek(!published)
+    document.querySelector('#repeat-week').onclick=openRepeatModal
+    document.querySelectorAll('[data-drag]').forEach(b=>b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/plain',b.dataset.drag); e.dataTransfer.effectAllowed='move' }))
+    document.querySelectorAll('[data-drop]').forEach(c=>{
+      c.addEventListener('dragover',e=>{e.preventDefault();c.classList.add('drag-over')})
+      c.addEventListener('dragleave',()=>c.classList.remove('drag-over'))
+      c.addEventListener('drop',async e=>{e.preventDefault();c.classList.remove('drag-over');await moveShift(e.dataTransfer.getData('text/plain'),c.dataset.drop)})
+    })
+  }
+}
+
+async function togglePublishWeek(publish) {
+  const m=monday(weekDate), start=isoDate(m), end=isoDate(addDays(m,6))
+  const {error}=await supabase.from('rota_shifts').update({published:publish}).gte('shift_date',start).lte('shift_date',end)
+  if(error) notify(error.message,'error'); else {notify(publish?'Week published':'Week moved back to draft','success');await renderCurrent()}
+}
+
+function openRepeatModal() {
+  modal=showModal(`<h2>Repeat this week</h2><p class="muted">Create draft copies of the current week. The copied weeks stay hidden from team members until published.</p>
+    <label>Number of weeks<select id="rw">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} week${i?'s':''}</option>`).join('')}</select></label>
+    <div class="modal-actions"><button class="ghost" id="mc">Cancel</button><button class="primary" id="ms">Create drafts</button></div>`)
+  modal.querySelector('#mc').onclick=closeModal
+  modal.querySelector('#ms').onclick=async()=>{
+    const weeks=Number(modal.querySelector('#rw').value), sourceStart=monday(weekDate), sourceEnd=addDays(sourceStart,6)
+    const {data:source,error:e}=await supabase.from('rota_shifts').select('*').gte('shift_date',isoDate(sourceStart)).lte('shift_date',isoDate(sourceEnd))
+    if(e) return notify(e.message,'error')
+    if(!source?.length) return notify('There are no shifts in this week to repeat.','error')
+    const payload=[]
+    for(let w=1;w<=weeks;w++) for(const s of source) payload.push({team_member_id:s.team_member_id,shift_date:isoDate(addDays(new Date(`${s.shift_date}T00:00:00`),7*w)),shift_type:s.shift_type,note:s.note,published:false})
+    const {error}=await supabase.from('rota_shifts').upsert(payload,{onConflict:'team_member_id,shift_date'})
+    if(error) notify(error.message,'error'); else {notify(`${weeks} draft week${weeks>1?'s':''} created.`,'success');closeModal();await renderCurrent()}
+  }
+}
+
+async function moveShift(id,key) {
+  const s=shifts.find(x=>x.id===id); if(!s) return
+  const [memberId,date]=key.split('|')
+  if(s.team_member_id===memberId && s.shift_date===date) return
+  const dest=shiftFor(memberId,date)
+  if(dest) {
+    if(!confirm(`Swap ${s.shift_type} with ${dest.shift_type}?`)) return
+    const tempDate='1900-01-01'
+    const e0=await supabase.from('rota_shifts').update({shift_date:tempDate}).eq('id',s.id)
+    if(e0.error) return notify(e0.error.message,'error')
+    const e1=await supabase.from('rota_shifts').update({team_member_id:s.team_member_id,shift_date:s.shift_date}).eq('id',dest.id)
+    const e2=await supabase.from('rota_shifts').update({team_member_id:memberId,shift_date:date}).eq('id',s.id)
+    if(e1.error||e2.error) return notify((e1.error||e2.error).message,'error')
+  } else {
+    const {error}=await supabase.from('rota_shifts').update({team_member_id:memberId,shift_date:date}).eq('id',s.id)
+    if(error) return notify(error.message,'error')
+  }
+  notify('Shift moved','success'); await renderCurrent()
 }
 
 function openShiftModal(key) {
@@ -210,7 +267,7 @@ function openShiftModal(key) {
       return
     }
     if (!type) return
-    const payload={team_member_id:memberId,shift_date:date,shift_type:type,note}
+    const payload={team_member_id:memberId,shift_date:date,shift_type:type,note,published:existing ? existing.published !== false : weekIsPublished()}
     const {error}=await supabase.from('rota_shifts').upsert(payload,{onConflict:'team_member_id,shift_date'})
     if(error) notify(error.message,'error'); else {notify('Rota saved','success');closeModal();await renderCurrent()}
   }
@@ -318,20 +375,14 @@ async function renderAdmin(view) {
 }
 
 async function copyWeek() {
-  const sourceStart=monday(weekDate), targetStart=addDays(sourceStart,7)
-  const {data:source,error:e}=await supabase.from('rota_shifts').select('*')
-    .gte('shift_date',isoDate(sourceStart)).lte('shift_date',isoDate(addDays(sourceStart,6)))
+  const sourceStart=monday(weekDate)
+  const {data:source,error:e}=await supabase.from('rota_shifts').select('*').gte('shift_date',isoDate(sourceStart)).lte('shift_date',isoDate(addDays(sourceStart,6)))
   if(e) return notify(e.message,'error')
-  const payload=(source||[]).map(s=>({
-    team_member_id:s.team_member_id,
-    shift_date:isoDate(addDays(new Date(`${s.shift_date}T00:00:00`),7)),
-    shift_type:s.shift_type,
-    note:s.note
-  }))
+  const payload=(source||[]).map(s=>({team_member_id:s.team_member_id,shift_date:isoDate(addDays(new Date(`${s.shift_date}T00:00:00`),7)),shift_type:s.shift_type,note:s.note,published:false}))
   if(!payload.length) return notify('There are no shifts in this week to copy.','error')
   const {error}=await supabase.from('rota_shifts').upsert(payload,{onConflict:'team_member_id,shift_date'})
   if(error) notify(error.message,'error')
-  else notify(`${payload.length} shifts copied to next week.`,'success')
+  else notify(`${payload.length} draft shifts copied to next week.`,'success')
 }
 
 function openMemberEditModal(id) {
