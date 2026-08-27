@@ -98,6 +98,7 @@ async function loadMembers() {
   members = data || []
 }
 
+
 async function loadShifts() {
   const m = monday(weekDate), s = addDays(m,6)
   const { data, error } = await supabase.from('rota_shifts')
