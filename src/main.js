@@ -93,10 +93,11 @@ async function loadUser(user) {
 
 async function loadMembers() {
   const { data, error } = await supabase.from('team_members')
-    .select('*').eq('active', true).order('name')
+    .select('*').order('name')
   if (error) { notify(error.message,'error'); return }
   members = data || []
 }
+
 async function loadShifts() {
   const m = monday(weekDate), s = addDays(m,6)
   const { data, error } = await supabase.from('rota_shifts')
@@ -180,7 +181,7 @@ async function renderRota(view) {
       </div>
       <div class="calendar"><div class="grid">
         <div class="head"><div>Team member</div>${days.map(d=>`<div class="${isoDate(d)===today?'today-head':''} ${d.getDay()===0||d.getDay()===6?'weekend':''}">${d.toLocaleDateString('en-GB',{weekday:'short'})}<small>${fmtDate(d)}</small></div>`).join('')}</div>
-        ${members.map(p=>`<div class="row"><div class="person"><span class="avatar">${initials(p.name)}</span><div>${esc(p.name)}${isAdmin()&&p.active===false?'<small class="inactive">Inactive</small>':''}</div></div>
+        ${members.filter(p=>p.active).map(p=>`<div class="row"><div class="person"><span class="avatar">${initials(p.name)}</span><div>${esc(p.name)}${isAdmin()&&p.active===false?'<small class="inactive">Inactive</small>':''}</div></div>
           ${days.map(d=>{
             const date=isoDate(d), s=shiftFor(p.id,date)
             return `<div class="cell ${date===today?'today-cell':''} ${d.getDay()===0||d.getDay()===6?'weekend-cell':''}" data-drop="${p.id}|${date}">${isAdmin()
@@ -327,7 +328,7 @@ async function renderAdmin(view) {
     <div class="section-head"><div><h2>Admin</h2><p class="muted">Manage the rota, team and requests.</p></div></div>
 
     <div class="stats">
-      <div><b>${members.length}</b><span>Team members</span></div>
+      <div><b>${members.filter(m=>m.active).length}</b><span>Active team members</span></div>
       <div><b>${(swaps?.length||0)+(offs?.length||0)}</b><span>Pending requests</span></div>
       <div><b>${offs?.length||0}</b><span>Time-off requests</span></div>
     </div>
