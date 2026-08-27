@@ -415,6 +415,7 @@ function openAddMemberModal() {
   modal = showModal(`<h2>Add team member</h2>
     <label>Name<input id="an" placeholder="Full name"></label>
     <label>Username<input id="au" placeholder="username"></label>
+    <label>Password<input id="ap" type="password" placeholder="Temporary password" autocomplete="new-password"></label>
     <label>Role<select id="ar">
       <option value="member">Team member</option>
       <option value="admin">Admin</option>
@@ -429,11 +430,20 @@ function openAddMemberModal() {
   modal.querySelector('#as').onclick = async () => {
     const name = modal.querySelector('#an').value.trim()
     const username = modal.querySelector('#au').value.trim()
+    const password = modal.querySelector('#ap').value
     const role = modal.querySelector('#ar').value
 
-    if (!name || !username) {
-      return notify('Name and username are required', 'error')
+    if (!name || !username || !password) {
+      return notify('Name, username and password are required', 'error')
     }
+
+    if (password.length < 6) {
+      return notify('Password must be at least 6 characters', 'error')
+    }
+
+    const button = modal.querySelector('#as')
+    button.disabled = true
+    button.textContent = 'Adding…'
 
     try {
       const { data, error } = await supabase.functions.invoke(
@@ -442,6 +452,7 @@ function openAddMemberModal() {
           body: {
             name,
             username,
+            password,
             role
           }
         }
@@ -456,9 +467,11 @@ function openAddMemberModal() {
       notify('Team member added', 'success')
       closeModal()
       await loadMembers()
-      await loadUser(currentUser)
+      await renderCurrent()
 
     } catch (error) {
+      button.disabled = false
+      button.textContent = 'Add member'
       notify(error.message || 'Could not create team member', 'error')
     }
   }
