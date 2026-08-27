@@ -340,7 +340,14 @@ async function renderAdmin(view) {
     </div>
 
     <div id="team-manager" class="team-manager hidden">
-      <div class="section-subhead"><div><h3>Team members</h3><p class="muted">Manage names, usernames and active status. New authentication accounts are still created in Supabase Auth.</p></div></div>
+     <div class="section-head">
+  <div>
+    <h3>Team members</h3>
+    <p class="muted">Manage names, usernames and access.</p>
+  </div>
+
+  <button class="primary" id="add-member">+ Add member</button>
+</div>
       <div class="member-list">
         ${members.map(m=>`<div class="member-admin-row">
           <div class="member-main"><span class="avatar">${initials(m.name)}</span><div><b>${esc(m.name)}</b><span>@${esc(m.username)} · ${m.role}</span></div></div>
@@ -361,7 +368,7 @@ async function renderAdmin(view) {
   </section>`
 
   view.querySelector('#manage-team').onclick=()=>view.querySelector('#team-manager').classList.toggle('hidden')
-
+  view.querySelector('#add-member').onclick=()=>openAddMemberModal()         
   view.querySelector('#copy-week').onclick=async()=>{
     const ok=confirm(`Copy all shifts from ${weekLabel()} into the following week? Existing shifts in the destination week will be replaced.`)
     if(!ok) return
@@ -404,7 +411,58 @@ function openMemberEditModal(id) {
     else {notify('Team member updated','success');closeModal();await loadMembers();await loadUser(currentUser)}
   }
 }
+function openAddMemberModal() {
+  modal = showModal(`<h2>Add team member</h2>
+    <label>Name<input id="an" placeholder="Full name"></label>
+    <label>Username<input id="au" placeholder="username"></label>
+    <label>Role<select id="ar">
+      <option value="member">Team member</option>
+      <option value="admin">Admin</option>
+    </select></label>
+    <div class="modal-actions">
+      <button class="ghost" id="ac">Cancel</button>
+      <button class="primary" id="as">Add member</button>
+    </div>`)
 
+  modal.querySelector('#ac').onclick = closeModal
+
+  modal.querySelector('#as').onclick = async () => {
+    const name = modal.querySelector('#an').value.trim()
+    const username = modal.querySelector('#au').value.trim()
+    const role = modal.querySelector('#ar').value
+
+    if (!name || !username) {
+      return notify('Name and username are required', 'error')
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'create-team-member',
+        {
+          body: {
+            name,
+            username,
+            role
+          }
+        }
+      )
+
+      if (error) throw error
+
+      if (!data?.success) {
+        throw new Error(data?.error || 'Could not create team member')
+      }
+
+      notify('Team member added', 'success')
+      closeModal()
+      await loadMembers()
+      await loadUser(currentUser)
+
+    } catch (error) {
+      notify(error.message || 'Could not create team member', 'error')
+    }
+  }
+}
 async function toggleMember(id) {
   const m=members.find(x=>x.id===id)
   if(!m) return
