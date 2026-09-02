@@ -352,9 +352,12 @@ async function renderAdmin(view) {
         ${members.map(m=>`<div class="member-admin-row">
           <div class="member-main"><span class="avatar">${initials(m.name)}</span><div><b>${esc(m.name)}</b><span>@${esc(m.username)} · ${m.role}</span></div></div>
           <div class="row-actions">
-            <button class="ghost" data-member-edit="${m.id}">Edit</button>
-            ${m.id!==currentMember.id?`<button class="ghost" data-member-toggle="${m.id}">${m.active?'Deactivate':'Activate'}</button>`:''}
-          </div>
+  <button class="ghost" data-member-edit="${m.id}">Edit</button>
+  ${m.id!==currentMember.id?`
+    <button class="ghost" data-member-reset="${m.id}">Reset password</button>
+    <button class="ghost" data-member-toggle="${m.id}">${m.active?'Deactivate':'Activate'}</button>
+  `:''}
+</div>
         </div>`).join('')}
       </div>
     </div>
@@ -376,6 +379,9 @@ async function renderAdmin(view) {
   }
 
   view.querySelectorAll('[data-member-edit]').forEach(b=>b.onclick=()=>openMemberEditModal(b.dataset.memberEdit))
+  view.querySelectorAll('[data-member-reset]').forEach(
+  b => b.onclick = () => openMemberPasswordResetModal(b.dataset.memberReset)
+)
   view.querySelectorAll('[data-member-toggle]').forEach(b=>b.onclick=()=>toggleMember(b.dataset.memberToggle))
   view.querySelectorAll('[data-swap-approve]').forEach(b=>b.onclick=()=>reviewSwap(b.dataset.swapApprove,true))
   view.querySelectorAll('[data-swap-decline]').forEach(b=>b.onclick=()=>reviewSwap(b.dataset.swapDecline,false))
@@ -409,6 +415,82 @@ function openMemberEditModal(id) {
     const {error}=await supabase.from('team_members').update({name,username,role}).eq('id',id)
     if(error) notify(error.message,'error')
     else {notify('Team member updated','success');closeModal();await loadMembers();await loadUser(currentUser)}
+  }
+}
+function openMemberPasswordResetModal(id) {
+  const m = members.find(x => x.id === id)
+  if (!m) return
+
+  modal = showModal(`
+    <h2>Reset password</h2>
+    <p class="muted">Set a new password for <b>${esc(m.name)}</b>.</p>
+
+    <label>
+      New password
+      <input id="rp" type="password" autocomplete="new-password">
+    </label>
+
+    <label>
+      Confirm password
+      <input id="rpc" type="password" autocomplete="new-password">
+    </label>
+
+    <div class="modal-actions">
+      <button class="ghost" id="rpcancel">Cancel</button>
+      <button class="primary" id="rpsave">Reset password</button>
+    </div>
+  `)
+
+  modal.querySelector('#rpcancel').onclick = closeModal
+
+  modal.querySelector('#rpsave').onclick = async () => {
+    const password = modal.querySelector('#rp').value
+    const confirmPassword = modal.querySelector('#rpc').value
+
+    if (!password) {
+      return notify('Enter a new password', 'error')
+    }
+
+    if (password.length < 6) {
+      return notify('Password must be at least 6 characters', 'error')
+    }
+
+    if (password !== confirmPassword) {
+      return notify('Passwords do not match', 'error')
+    }
+
+    const button = modal.querySelector('#rpsave')
+    button.disabled = true
+    button.textContent = 'Resetting...'
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'reset-team-member-password',
+        {
+          body: {
+            memberId: id,
+            password
+          }
+        }
+      )
+
+      if (error) {
+        throw error
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.error || 'Failed to reset password')
+      }
+
+      notify('Password reset successfully', 'success')
+      closeModal()
+
+    } catch (error) {
+      console.error(error)
+      notify(error.message || 'Failed to reset password', 'error')
+      button.disabled = false
+      button.textContent = 'Reset password'
+    }
   }
 }
 function openAddMemberModal() {
